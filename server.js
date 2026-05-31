@@ -5,7 +5,13 @@ const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
+   const io = new Server(server, {
+       cors: {
+           origin: "*",
+           methods: ["GET", "POST"]
+       },
+       transports: ['websocket', 'polling']
+   });
 
 // Отдаем index.html напрямую из корня репозитория
 app.get('/', (req, res) => {
