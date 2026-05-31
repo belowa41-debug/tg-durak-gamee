@@ -38,7 +38,7 @@
         <button onclick="location.reload()">Играть снова</button>
     </div>
     <script>
-        const socket = io();
+        const socket = io('https://my-durak-online.onrender.com');
         let roomId = window.location.hash.substring(1);
         if (!roomId) {
             roomId = Math.random().toString(36).substring(2, 7);
