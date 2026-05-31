@@ -42,7 +42,10 @@
     </div>
     <script>
         // ВАЖНО: Замени ссылку ниже на свою ссылку от Render!
-        const socket = io('https://my-durak-online.onrender.com');
+        const socket = io('https://my-durak-online.onrender.com', {
+       transports: ['websocket', 'polling'],
+       upgrade: true
+   });
         
         // Автоматически генерируем хвостик комнаты, если его нет
         let roomId = window.location.hash.substring(1);
