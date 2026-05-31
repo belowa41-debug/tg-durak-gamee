@@ -5,20 +5,21 @@ const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
-   const io = new Server(server, {
-       cors: {
-           origin: "*",
-           methods: ["GET", "POST"]
-       },
-       transports: ['websocket', 'polling']
-   });
 
-// Отдаем index.html напрямую из корня репозитория
+// Тонкая настройка сетевых подключений для Render
+const io = new Server(server, {
+    cors: {
+        origin: "*",
+        methods: ["GET", "POST"]
+    },
+    transports: ['websocket', 'polling']
+});
+
+// Отдаем игру напрямую из корня
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// Если в игре будут картинки или другие файлы в корне
 app.use(express.static(__dirname));
 
 const SUITS = [
@@ -73,7 +74,6 @@ io.on('connection', (socket) => {
         let roomId = getPlayerRoom(socket.id);
         if (!roomId) return;
         let room = rooms[roomId];
-        let playerIdx = room.players.findIndex(p => p.id === socket.id);
         if (room.state !== "PLAYING") return;
         room.table = [];
         room.turn = (room.turn + 1) % 2;
