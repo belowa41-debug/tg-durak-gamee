@@ -6,7 +6,6 @@ const path = require('path');
 const app = express();
 const server = http.createServer(app);
 
-// Тонкая настройка сетевых подключений для Render
 const io = new Server(server, {
     cors: {
         origin: "*",
@@ -15,7 +14,6 @@ const io = new Server(server, {
     transports: ['websocket', 'polling']
 });
 
-// Отдаем игру напрямую из корня
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
@@ -74,6 +72,7 @@ io.on('connection', (socket) => {
         let roomId = getPlayerRoom(socket.id);
         if (!roomId) return;
         let room = rooms[roomId];
+        let playerIdx = room.players.findIndex(p => p.id === socket.id);
         if (room.state !== "PLAYING") return;
         room.table = [];
         room.turn = (room.turn + 1) % 2;
@@ -146,5 +145,6 @@ function getPlayerRoom(socketId) {
     return null;
 }
 
+// Слушаем порт от Render на адресе 0.0.0.0
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => console.log(`Сервер запущен на порту ${PORT}`));
+server.listen(PORT, '0.0.0.0', () => console.log(`Сервер запущен на порту ${PORT}`));
