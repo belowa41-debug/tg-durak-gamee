@@ -7,172 +7,138 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
-app.use(express.static(path.join(__dirname, 'public')));
+// Отдаем index.html напрямую из корня репозитория
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+// Если в игре будут картинки или другие файлы в корне
+app.use(express.static(__dirname));
+
+const SUITS = [
+    { id: 'spades', symbol: '♠', color: 'black' },
+    { id: 'clubs', symbol: '♣', color: 'black' },
+    { id: 'hearts', symbol: '♥', color: 'red' },
+    { id: 'diamonds', symbol: '♦', color: 'red' }
+];
+const VALUES = [
+    { name: '6', strength: 6 }, { name: '7', strength: 7 }, { name: '8', strength: 8 },
+    { name: '9', strength: 9 }, { name: '10', strength: 10 }, { name: 'J', strength: 11 },
+    { name: 'Q', strength: 12 }, { name: 'K', strength: 13 }, { name: 'A', strength: 14 }
+];
 
 let rooms = {};
 
-const suits = [
-    { symbol: '♥', color: 'red' }, { symbol: '♦', color: 'red' },
-    { symbol: '♣', color: 'black' }, { symbol: '♠', color: 'black' }
-];
-const values = [
-    { name: '6', power: 6 }, { name: '7', power: 7 }, { name: '8', power: 8 },
-    { name: '9', power: 9 }, { name: '10', power: 10 }, { name: 'J', power: 11 },
-    { name: 'Q', power: 12 }, { name: 'K', power: 13 }, { name: 'A', power: 14 }
-];
-
 io.on('connection', (socket) => {
-    let currentRoom = null;
-
     socket.on('joinRoom', (roomId) => {
-        if (!rooms[roomId]) {
-            rooms[roomId] = {
-                players: [], deck: [], table: [], trump: null,
-                attackerIdx: 0, gameState: "WAITING", timer: null, timeLeft: 30
-            };
-        }
-
-        const room = rooms[roomId];
-        if (room.players.length >= 2) {
-            socket.emit('status', 'Комната уже заполнена!');
-            return;
-        }
-
-        currentRoom = roomId;
         socket.join(roomId);
-        room.players.push({ id: socket.id, hand: [] });
-
-        if (room.players.length === 1) {
-            socket.emit('status', 'Ожидаем второго игрока...');
+        if (!rooms[roomId]) {
+            rooms[roomId] = { players: [], deck: [], trump: null, table: [], turn: 0, state: "WAITING" };
         }
+        let room = rooms[roomId];
+        if (room.players.length < 2 && !room.players.some(p => p.id === socket.id)) {
+            room.players.push({ id: socket.id, hand: [], name: `Игрок ${room.players.length + 1}` });
+        }
+        if (room.players.length === 2 && room.state === "WAITING") {
+            initGame(room);
+        } else {
+            socket.emit('status', "Ожидаем второго игрока...");
+        }
+        updateRoom(roomId);
+    });
 
-        if (room.players.length === 2 && room.gameState === "WAITING") {
-            room.gameState = "PLAYING";
-            initDeck(room);
-            resetRoomTimer(roomId);
+    socket.on('playCard', (cardIdx) => {
+        let roomId = getPlayerRoom(socket.id);
+        if (!roomId) return;
+        let room = rooms[roomId];
+        let playerIdx = room.players.findIndex(p => p.id === socket.id);
+        if (playerIdx !== room.turn || room.state !== "PLAYING") return;
+        let player = room.players[playerIdx];
+        if (cardIdx >= 0 && cardIdx < player.hand.length) {
+            let card = player.hand.splice(cardIdx, 1)[0];
+            room.table.push(card);
+            room.turn = (room.turn + 1) % 2;
+            checkWin(roomId);
             updateRoom(roomId);
         }
     });
 
-    socket.on('playCard', (cardIndex) => {
-        const room = rooms[currentRoom];
-        if (!room || room.gameState !== "PLAYING") return;
-
-        const playerIdx = room.players.findIndex(p => p.id === socket.id);
-        if (playerIdx !== room.attackerIdx) return; 
-
-        const card = room.players[playerIdx].hand.splice(cardIndex, 1)[0];
-        room.table.push(card);
-        
-        room.attackerIdx = room.attackerIdx === 0 ? 1 : 0;
-        
-        resetRoomTimer(currentRoom);
-        updateRoom(currentRoom);
-        checkWin(currentRoom);
-    });
-
     socket.on('actionButton', () => {
-        const room = rooms[currentRoom];
-        if (!room || room.gameState !== "PLAYING") return;
-
-        const playerIdx = room.players.findIndex(p => p.id === socket.id);
-        
-        if (playerIdx === room.attackerIdx) {
-            room.table = [];
-            giveCards(room);
-            room.attackerIdx = room.attackerIdx === 0 ? 1 : 0;
-        } else {
-            room.players[playerIdx].hand.push(...room.table);
-            room.table = [];
-            giveCards(room);
-        }
-
-        resetRoomTimer(currentRoom);
-        updateRoom(currentRoom);
-        checkWin(currentRoom);
+        let roomId = getPlayerRoom(socket.id);
+        if (!roomId) return;
+        let room = rooms[roomId];
+        let playerIdx = room.players.findIndex(p => p.id === socket.id);
+        if (room.state !== "PLAYING") return;
+        room.table = [];
+        room.turn = (room.turn + 1) % 2;
+        updateRoom(roomId);
     });
 
     socket.on('disconnect', () => {
-        if (currentRoom && rooms[currentRoom]) {
-            clearInterval(rooms[currentRoom].timer);
-            io.to(currentRoom).emit('status', 'Соперник вышел из игры.');
-            delete rooms[currentRoom];
+        let roomId = getPlayerRoom(socket.id);
+        if (roomId && rooms[roomId]) {
+            io.to(roomId).emit('status', "Соперник отключился.");
+            delete rooms[roomId];
         }
     });
 });
 
-function initDeck(room) {
+function initGame(room) {
+    room.state = "PLAYING";
     room.deck = [];
-    for (let s of suits) {
-        for (let v of values) {
-            room.deck.push({ suit: s, value: v });
+    for (let suit of SUITS) {
+        for (let val of VALUES) {
+            room.deck.push({ suit, value: val });
         }
     }
     room.deck.sort(() => Math.random() - 0.5);
     room.trump = room.deck[room.deck.length - 1];
-    giveCards(room);
-}
-
-function giveCards(room) {
-    room.players.forEach(p => {
-        while (p.hand.length < 6 && room.deck.length > 0) {
-            p.hand.push(room.deck.shift());
-        }
-    });
-}
-
-function resetRoomTimer(roomId) {
-    const room = rooms[roomId];
-    if (!room) return;
-    clearInterval(room.timer);
-    room.timeLeft = 30;
-
-    room.timer = setInterval(() => {
-        room.timeLeft--;
-        io.to(roomId).emit('timerUpdate', room.timeLeft);
-        if (room.timeLeft <= 0) {
-            clearInterval(room.timer);
-            const winner = room.players[room.attackerIdx === 0 ? 1 : 0];
-            room.gameState = "FINISHED";
-            io.to(roomId).emit('gameOver', { winner: winner.id });
-        }
-    }, 1000);
+    for (let player of room.players) {
+        player.hand = room.deck.splice(0, 6);
+    }
+    room.turn = 0;
 }
 
 function checkWin(roomId) {
-    const room = rooms[roomId];
+    let room = rooms[roomId];
     if (room.deck.length === 0) {
-        const p1Cards = room.players[0].hand.length;
-        const p2Cards = room.players[1].hand.length;
-
-        if (p1Cards === 0 && p2Cards > 0) {
-            room.gameState = "FINISHED";
-            clearInterval(room.timer);
-            io.to(roomId).emit('gameOver', { winner: room.players[0].id });
-        } else if (p2Cards === 0 && p1Cards > 0) {
-            room.gameState = "FINISHED";
-            clearInterval(room.timer);
-            io.to(roomId).emit('gameOver', { winner: room.players[1].id });
+        let p1 = room.players[0];
+        let p2 = room.players[1];
+        if (p1.hand.length === 0 && p2.hand.length === 0) {
+            room.state = "ENDED";
+            io.to(roomId).emit('gameOver', { winner: 'draw' });
+        } else if (p1.hand.length === 0) {
+            room.state = "ENDED";
+            io.to(roomId).emit('gameOver', { winner: p1.id });
+        } else if (p2.hand.length === 0) {
+            room.state = "ENDED";
+            io.to(roomId).emit('gameOver', { winner: p2.id });
         }
     }
 }
 
 function updateRoom(roomId) {
-    const room = rooms[roomId];
-    if (!room) return;
+    let room = rooms[roomId];
+    if (!room || room.state !== "PLAYING") return;
     room.players.forEach((player, idx) => {
-        const enemyIdx = idx === 0 ? 1 : 0;
+        let enemy = room.players[(idx + 1) % 2];
         io.to(player.id).emit('gameState', {
             myHand: player.hand,
-            enemyCardCount: room.players[enemyIdx].hand.length,
+            enemyCardCount: enemy ? enemy.hand.length : 0,
             table: room.table,
-            deckCount: room.deck.length,
             trump: room.trump,
-            isMyTurn: room.attackerIdx === idx,
-            gameState: room.gameState
+            isMyTurn: room.turn === idx,
+            gameState: room.state
         });
     });
 }
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Сервер запущен`));
+function getPlayerRoom(socketId) {
+    for (let rId in rooms) {
+        if (rooms[rId].players.some(p => p.id === socketId)) return rId;
+    }
+    return null;
+}
+
+const PORT = process.env.PORT || 10000;
+server.listen(PORT, () => console.log(`Сервер запущен на порту ${PORT}`));
